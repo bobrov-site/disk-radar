@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import webbrowser
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -32,15 +33,16 @@ class ScanSlot:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._token = 0
-        self._proc: subprocess.Popen[str] | subprocess.Popen[bytes] | None = None
+        self._procs: list[subprocess.Popen[str] | subprocess.Popen[bytes]] = []
 
     def start(self) -> int:
         with self._lock:
             self._token += 1
-            proc = self._proc
-            self._proc = None
+            procs = self._procs
+            self._procs = []
             token = self._token
-        _kill(proc)
+        for proc in procs:
+            _kill(proc)
         return token
 
     def bind(self, token: int, proc: subprocess.Popen[str] | subprocess.Popen[bytes]) -> bool:
@@ -48,8 +50,13 @@ class ScanSlot:
             if token != self._token:
                 _kill(proc)
                 return False
-            self._proc = proc
+            self._procs.append(proc)
             return True
+
+    def release(self, proc: subprocess.Popen[str] | subprocess.Popen[bytes]) -> None:
+        with self._lock:
+            if proc in self._procs:
+                self._procs.remove(proc)
 
     def current(self, token: int) -> bool:
         with self._lock:
@@ -169,161 +176,183 @@ def parse_du_line(line: str) -> tuple[int, str]:
     return int(size_s) * 1024, os.path.normpath(raw_path)
 
 
-def list_directory(raw: str | None, token: int) -> dict | None:
-    path = resolved_home_path(raw) if raw else HOME
-    if not path.exists():
-        raise FileNotFoundError(str(path))
-    if not path.is_dir():
-        raise NotADirectoryError(str(path))
+def _describe_entry(entry: os.DirEntry[str]) -> dict:
+    is_dir = entry.is_dir(follow_symlinks=False)
+    if not is_dir and entry.is_symlink() and entry.is_dir(follow_symlinks=True):
+        try:
+            is_dir = inside_home(Path(os.path.realpath(entry.path)))
+        except OSError:
+            is_dir = False
+    try:
+        stat = entry.stat(follow_symlinks=False)
+        readable = os.access(entry.path, os.R_OK | (os.X_OK if is_dir else 0))
+    except OSError:
+        stat = None
+        readable = False
+    size = None
+    pending = False
+    if stat is not None and not is_dir:
+        size = stat.st_blocks * 512
+    elif is_dir and readable:
+        pending = True
+    return {
+        "name": entry.name,
+        "path": entry.path,
+        "dir": is_dir,
+        "size": size,
+        "modified": int(stat.st_mtime) if stat is not None else None,
+        "accessible": readable,
+        "pending": pending,
+    }
 
-    mtime = path.stat().st_mtime_ns
-    key = str(path)
-    with CACHE_LOCK:
-        cached = CACHE.get(key)
-    if cached and cached[0] == mtime and SCANS.current(token):
-        return {**cached[1], "cached": True}
 
+def directory_size(folder: str, token: int) -> int | None:
     proc = subprocess.Popen(
-        ["du", "-k", "-d", "1", str(path)],
+        ["du", "-k", "-d", "0", folder],
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
         text=True,
     )
     if not SCANS.bind(token, proc):
         return None
     stdout, _stderr = proc.communicate()
+    SCANS.release(proc)
     if not SCANS.current(token) or proc.returncode not in (0, 1):
         return None
+    lines = stdout.strip().splitlines()
+    if not lines:
+        return None
+    try:
+        size, _raw_path = parse_du_line(lines[0])
+    except ValueError:
+        return None
+    return size
 
-    sizes: dict[str, int] = {}
-    for line in stdout.splitlines():
-        if not line.strip():
-            continue
-        try:
-            size, raw_path = parse_du_line(line)
-        except ValueError:
-            continue
-        sizes[raw_path] = size
+
+def iter_directory(path: Path, token: int):
+    if not path.exists():
+        raise FileNotFoundError(str(path))
+    if not path.is_dir():
+        raise NotADirectoryError(str(path))
+    mtime = path.stat().st_mtime_ns
+    key = str(path)
+    parent = str(path.parent) if path != HOME and inside_home(path.parent) else None
+    yield {"kind": "start", "path": str(path), "home": str(HOME), "parent": parent}
+
+    with CACHE_LOCK:
+        cached = CACHE.get(key)
+    if cached and cached[0] == mtime and SCANS.current(token):
+        for entry in cached[1]["entries"]:
+            yield {"kind": "entry", **entry}
+        yield {"done": True, "cancelled": False, "total": cached[1]["total"], "cached": True}
+        return
 
     entries: list[dict] = []
     with os.scandir(path) as scan:
-        for entry in scan:
-            child = Path(entry.path)
-            norm = os.path.normpath(entry.path)
-            is_dir = entry.is_dir(follow_symlinks=False)
-            if not is_dir and entry.is_symlink() and entry.is_dir(follow_symlinks=True):
-                try:
-                    is_dir = inside_home(Path(os.path.realpath(entry.path)))
-                except OSError:
-                    is_dir = False
-            try:
-                stat = entry.stat(follow_symlinks=False)
-                readable = os.access(entry.path, os.R_OK | (os.X_OK if is_dir else 0))
-            except OSError:
-                stat = None
-                readable = False
-            size = sizes.get(norm)
-            if size is None and stat is not None and not is_dir:
-                size = stat.st_blocks * 512
-            if is_dir and norm not in sizes:
-                readable = False
-            entries.append(
-                {
-                    "name": entry.name,
-                    "path": str(child),
-                    "dir": is_dir,
-                    "size": size,
-                    "accessible": readable,
-                }
-            )
+        for dir_entry in scan:
+            if not SCANS.current(token):
+                yield {"done": True, "cancelled": True}
+                return
+            item = _describe_entry(dir_entry)
+            entries.append(item)
+            yield {"kind": "entry", **item}
 
-    entries.sort(key=lambda item: (item["size"] is None, -(item["size"] or 0), item["name"].lower()))
-    parent = str(path.parent) if path != HOME and inside_home(path.parent) else None
-    payload = {
-        "path": str(path),
-        "home": str(HOME),
-        "parent": parent,
-        "total": sizes.get(os.path.normpath(str(path))),
-        "entries": entries,
-    }
+    pending = [item["path"] for item in entries if item["pending"]]
+    executor = ThreadPoolExecutor(max_workers=4)
+    try:
+        futures = {executor.submit(directory_size, folder, token): folder for folder in pending}
+        for future in as_completed(futures):
+            if not SCANS.current(token):
+                yield {"done": True, "cancelled": True}
+                return
+            folder = futures[future]
+            size = future.result()
+            for item in entries:
+                if item["path"] != folder:
+                    continue
+                item["size"] = size
+                item["pending"] = False
+                if size is None:
+                    item["accessible"] = False
+                break
+            yield {
+                "kind": "size",
+                "path": folder,
+                "size": size,
+                "accessible": size is not None,
+            }
+    finally:
+        executor.shutdown(wait=True, cancel_futures=True)
+
+    if not SCANS.current(token):
+        yield {"done": True, "cancelled": True}
+        return
+    total = sum(item["size"] or 0 for item in entries)
     try:
         mtime_after = path.stat().st_mtime_ns
     except OSError:
         mtime_after = None
     if mtime_after == mtime and SCANS.current(token):
         with CACHE_LOCK:
-            CACHE[key] = (mtime, payload)
-    if not SCANS.current(token):
-        return None
-    return {**payload, "cached": False}
+            CACHE[key] = (
+                mtime,
+                {
+                    "path": str(path),
+                    "home": str(HOME),
+                    "parent": parent,
+                    "total": total,
+                    "entries": entries,
+                },
+            )
+    yield {"done": True, "cancelled": False, "total": total, "cached": False}
 
 
 def iter_large_files(path: Path, min_bytes: int, token: int):
-    blocks = max(min_bytes // 512, 0)
-    spec = f"+{max(blocks - 1, 0)}"
-    proc = subprocess.Popen(
-        ["find", str(path), "-xdev", "-type", "f", "-size", spec, "-print0"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-    )
-    if not SCANS.bind(token, proc) or proc.stdout is None:
-        yield {"done": True, "cancelled": True}
-        return
-
-    batch: list[str] = []
-    pending = b""
-    cancelled = False
-
-    def flush(paths: list[str]):
-        if not paths or not SCANS.current(token):
-            return
-        measured = subprocess.run(
-            ["du", "-k", *paths],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        for line in measured.stdout.splitlines():
-            try:
-                size, file_path = parse_du_line(line)
-            except ValueError:
-                continue
-            yield_item = {
-                "name": Path(file_path).name,
-                "path": file_path,
-                "dir": False,
-                "size": size,
-                "accessible": True,
-            }
-            yield yield_item
-
-    while True:
+    root_dev = path.stat().st_dev
+    stack = [path]
+    while stack:
         if not SCANS.current(token):
-            cancelled = True
-            _kill(proc)
-            break
-        chunk = proc.stdout.read(65536)
-        if not chunk:
-            break
-        pending += chunk
-        parts = pending.split(b"\0")
-        pending = parts.pop()
-        for part in parts:
-            if not part:
-                continue
-            batch.append(os.fsdecode(part))
-            if len(batch) >= 40:
-                yield from flush(batch)
-                batch = []
-    if pending and not cancelled:
-        batch.append(os.fsdecode(pending))
-    if batch and not cancelled:
-        yield from flush(batch)
-    proc.wait()
-    yield {"done": True, "cancelled": cancelled or not SCANS.current(token)}
+            yield {"done": True, "cancelled": True}
+            return
+        current = stack.pop()
+        try:
+            scan = os.scandir(current)
+        except OSError:
+            continue
+        with scan:
+            for entry in scan:
+                if not SCANS.current(token):
+                    yield {"done": True, "cancelled": True}
+                    return
+                try:
+                    if entry.is_symlink():
+                        continue
+                    stat = entry.stat(follow_symlinks=False)
+                    if stat.st_dev != root_dev:
+                        continue
+                    if entry.is_dir(follow_symlinks=False):
+                        stack.append(Path(entry.path))
+                        continue
+                    if not entry.is_file(follow_symlinks=False):
+                        continue
+                except OSError:
+                    continue
+                allocated = stat.st_blocks * 512
+                if allocated < min_bytes:
+                    continue
+                yield {
+                    "name": entry.name,
+                    "path": entry.path,
+                    "dir": False,
+                    "size": allocated,
+                    "modified": int(stat.st_mtime),
+                    "accessible": True,
+                }
+    yield {"done": True, "cancelled": not SCANS.current(token)}
 
 
 class Handler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
     server_version = "disk-radar"
 
     def log_message(self, fmt: str, *args) -> None:
@@ -374,9 +403,12 @@ class Handler(BaseHTTPRequestHandler):
         raw = query.get("path", [None])[0]
         if raw:
             raw = unquote(raw)
-        token = SCANS.start()
         try:
-            payload = list_directory(raw, token)
+            path = resolved_home_path(raw) if raw else HOME
+            if not path.exists():
+                raise FileNotFoundError(str(path))
+            if not path.is_dir():
+                raise NotADirectoryError(str(path))
         except PermissionError as exc:
             self._send_json(403, {"error": str(exc)})
             return
@@ -389,10 +421,8 @@ class Handler(BaseHTTPRequestHandler):
         except OSError as exc:
             self._send_json(403, {"error": exc.strerror or "Нет доступа"})
             return
-        if payload is None:
-            self._send_json(200, {"cancelled": True})
-            return
-        self._send_json(200, payload)
+        token = SCANS.start()
+        self._stream(iter_directory(path, token))
 
     def _large(self, query: dict[str, list[str]]) -> None:
         if not self._authorized():
@@ -400,7 +430,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         raw = unquote(query.get("path", [str(HOME)])[0])
         try:
-            min_bytes = int(query.get("min_bytes", ["314572800"])[0])
+            min_bytes = int(query.get("min_bytes", [str(1024 ** 3)])[0])
         except ValueError:
             self._send_json(400, {"error": "Некорректный порог"})
             return

@@ -9,29 +9,46 @@
 <body>
   <header>
     <div class="title">
-      <h1>disk-radar</h1>
+      <div class="brand">
+        <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
+          <circle cx="16" cy="18" r="11" fill="currentColor"/>
+          <circle cx="16" cy="18" r="5.3" fill="var(--bg)"/>
+          <circle cx="16" cy="18" r="4" fill="var(--accent)"/>
+          <circle cx="16" cy="18" r="1.45" fill="currentColor"/>
+          <circle cx="28.4" cy="16.6" r="4.3" fill="var(--bg)"/>
+          <ellipse cx="21.4" cy="5.5" rx="3.5" ry="1.55" transform="rotate(-32 21.4 5.5)" fill="var(--accent)"/>
+        </svg>
+        <h1>disk-radar</h1>
+      </div>
       <p id="total"></p>
     </div>
     <nav id="crumbs" aria-label="Путь"></nav>
   </header>
   <div class="toolbar">
-    <button id="up" type="button">Вверх</button>
+    <label class="search">
+      Поиск
+      <input id="query" type="search" placeholder="Имя файла" autocomplete="off" spellcheck="false">
+    </label>
     <label class="threshold">
       Порог
-      <input id="min" type="number" min="1" max="1048576" value="300">
-      МБ
+      <input id="min" type="number" min="1" max="1024" step="1" value="1">
+      ГБ
     </label>
-    <button id="large" type="button">Крупные файлы</button>
+    <button id="large" type="button" class="switch" role="switch" aria-checked="false">
+      <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
+      Крупные файлы
+    </button>
     <button id="trash" type="button" class="danger" disabled>В Корзину</button>
-    <p id="status" role="status"></p>
+    <p id="status" role="status"><span id="spinner" aria-hidden="true"></span><span id="status-text"></span></p>
   </div>
   <div class="table-wrap">
     <table>
       <thead>
         <tr>
           <th class="check"></th>
-          <th>Имя</th>
-          <th class="size">На диске</th>
+          <th><button type="button" class="sort" data-sort="name">Имя</button></th>
+          <th class="when"><button type="button" class="sort" data-sort="modified">Изменён</button></th>
+          <th class="size"><button type="button" class="sort" data-sort="size">На диске</button></th>
         </tr>
       </thead>
       <tbody id="rows"></tbody>
