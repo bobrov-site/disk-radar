@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>disk-radar</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="title">
+      <h1>disk-radar</h1>
+      <p id="total"></p>
+    </div>
+    <nav id="crumbs" aria-label="Путь"></nav>
+  </header>
+  <div class="toolbar">
+    <button id="up" type="button">Вверх</button>
+    <label class="threshold">
+      Порог
+      <input id="min" type="number" min="1" max="1048576" value="300">
+      МБ
+    </label>
+    <button id="large" type="button">Крупные файлы</button>
+    <button id="trash" type="button" class="danger" disabled>В Корзину</button>
+    <p id="status" role="status"></p>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th class="check"></th>
+          <th>Имя</th>
+          <th class="size">На диске</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+  <dialog id="confirm">
+    <form method="dialog">
+      <h2>Убрать в Корзину?</h2>
+      <p id="confirm-lead"></p>
+      <ul id="confirm-list"></ul>
+      <div class="actions">
+        <button value="cancel" type="submit">Отмена</button>
+        <button value="ok" class="danger" type="submit">В Корзину</button>
+      </div>
+    </form>
+  </dialog>
+  <script>window.DISK_RADAR_TOKEN = "__TOKEN__";</script>
+  <script src="app.js"></script>
+</body>
+</html>

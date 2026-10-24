@@ -1,0 +1,224 @@
+:root {
+  color-scheme: light dark;
+  --bg: #f3efe6;
+  --ink: #1d1a16;
+  --muted: #6f675e;
+  --line: #ddd4c6;
+  --paper: #fffdf8;
+  --accent: #8f3d24;
+  --accent-ink: #fff8f4;
+  --hover: #f6efe4;
+  --danger: #8f3d24;
+  font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141210;
+    --ink: #f4efe6;
+    --muted: #b1a79b;
+    --line: #322c26;
+    --paper: #1c1916;
+    --accent: #e08a6e;
+    --accent-ink: #2a120c;
+    --hover: #26211c;
+    --danger: #e08a6e;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  min-height: 100vh;
+}
+
+header, .toolbar, .table-wrap {
+  width: min(960px, calc(100% - 32px));
+  margin-left: auto;
+  margin-right: auto;
+}
+
+header {
+  padding: 28px 0 8px;
+}
+
+.title {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: baseline;
+}
+
+h1, h2, p { margin: 0; }
+
+h1 {
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+
+#total, #status, .threshold, button, td.size, th.size {
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+
+#total, #status, .threshold {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+#crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 14px 0 4px;
+}
+
+#crumbs button {
+  background: transparent;
+  color: var(--ink);
+  border: 0;
+  border-bottom: 1px solid transparent;
+  padding: 0;
+  font: inherit;
+}
+
+#crumbs button:hover { border-bottom-color: var(--accent); }
+
+.sep { color: var(--muted); }
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 12px 0 16px;
+}
+
+button, input {
+  font: 14px/1.2 ui-sans-serif, system-ui, sans-serif;
+}
+
+button, input {
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink);
+  border-radius: 6px;
+  padding: 7px 10px;
+}
+
+button { cursor: pointer; }
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+button.danger {
+  background: var(--danger);
+  color: var(--accent-ink);
+  border-color: transparent;
+}
+
+input#min {
+  width: 5.5rem;
+  margin: 0 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.table-wrap {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: auto;
+  margin-bottom: 32px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th, td {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+
+th {
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+tr:last-child td { border-bottom: 0; }
+
+tbody tr:hover { background: var(--hover); }
+
+td.size, th.size {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.check { width: 36px; }
+
+.name {
+  display: block;
+  max-width: 62vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  padding: 0;
+  font: inherit;
+}
+
+button.name { cursor: pointer; font-weight: 600; }
+
+.muted { color: var(--muted); }
+
+dialog {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+  color: var(--ink);
+  padding: 20px;
+  width: min(520px, calc(100% - 32px));
+}
+
+dialog::backdrop { background: rgba(20, 16, 12, 0.45); }
+
+#confirm-lead { margin: 8px 0 12px; color: var(--muted); font-family: ui-sans-serif, system-ui, sans-serif; }
+
+#confirm-list {
+  max-height: 240px;
+  overflow: auto;
+  padding-left: 18px;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 13px;
+}
+
+#confirm-list li { margin: 4px 0; }
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.empty {
+  padding: 20px 12px;
+  color: var(--muted);
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
